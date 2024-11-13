@@ -13,9 +13,9 @@ from mbk_email import Email, EmailTest, process_file_info
 from digital_certificate.cert import Certificate
 
 # Diretórios para salvar os arquivos
-CSV_OUTPUT_DIR = r"C:\Users\miria\Desktop\mbk\csv"
-XLSX_OUTPUT_DIR = r"C:\Users\miria\Desktop\mbk"
-LOG_DIR = r"C:\Users\miria\Desktop\mbk\logs"
+CSV_OUTPUT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\csv"
+XLSX_OUTPUT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\xlsx"
+LOG_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\logs"
 
 # Configuração de logs
 if not os.path.exists(LOG_DIR):
@@ -24,8 +24,10 @@ log_filename = os.path.join(LOG_DIR, f"processamento_{datetime.now().strftime('%
 logging.basicConfig(filename=log_filename, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Variáveis para popular tabela
-ROOT_DIR = r"C:\Users\miria\Desktop\mbk"
-PWD_DIR = r"C:\Users\miria\Desktop\mbk\pwd"
+ROOT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk"
+PWD_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\pwd"
+
+# salvando os arquivos csv no repositório CSV_OUTPUT_DIR
 CLIENTES_ATIVOS_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PJ.csv")
 CLIENTES_ATIVOS_PF_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PF.csv")
 CLIENTES_INATIVOS_PF_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes inativos - PJ e PF.csv")
@@ -165,7 +167,7 @@ def process_ex_client(client):
             for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
                 writer.writerow(ex_client)
 
-# def check_ex_client(client):
+def check_ex_client(client):
     """Verificar se o cliente supostamente novo já não foi um cliente antes"""
     old_client = False
     with open(CLIENTES_INATIVOS_PF_PJ_CSV, encoding="ISO-8859-1") as f:
@@ -217,7 +219,11 @@ for subdir, dirs, files in os.walk(pfxs_directory):
             and "VENCIDOS" not in subdir
         ):
             pfx_file = os.path.join(subdir, file)
-            password = re.findall(r"\[(.*?)\]", file)[0]
+            password_match = re.findall(r"\[(.*?)\]", file)
+            if password_match:
+                password = password_match[0]
+            else:
+                raise ValueError(f"A senha para o arquivo '{file}' não foi encontrada no nome do arquivo.")
 
             certificate = Certificate(pfx_file, password.encode())
             certificate.read_pfx_file()
