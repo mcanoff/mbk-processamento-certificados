@@ -13,26 +13,25 @@ from mbk_email import Email, EmailTest, process_file_info
 from digital_certificate.cert import Certificate
 
 # Diretórios para salvar os arquivos
-CSV_OUTPUT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\csv"
-XLSX_OUTPUT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\xlsx"
-LOG_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\logs"
+ROOT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk"
+CSV_OUTPUT_DIR = os.path.join(ROOT_DIR, "csv")
+XLSX_OUTPUT_DIR = os.path.join(ROOT_DIR, "xlsx")
+LOG_DIR = os.path.join(ROOT_DIR, "logs")
+PWD_DIR = os.path.join(ROOT_DIR, "pwd")
 
 # Configuração de logs
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
+
 log_filename = os.path.join(LOG_DIR, f"processamento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 logging.basicConfig(filename=log_filename, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Variáveis para popular tabela
-ROOT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk"
-PWD_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\pwd"
-
-# salvando os arquivos csv no repositório CSV_OUTPUT_DIR
+# Caminho dos arquivos CSV de clientes
 CLIENTES_ATIVOS_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PJ.csv")
 CLIENTES_ATIVOS_PF_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PF.csv")
 CLIENTES_INATIVOS_PF_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes inativos - PJ e PF.csv")
 
-# Carregar planilhas existentes
+# Carregar planilhas existentes (?????)
 cnpj_wb = load_workbook(os.path.join(ROOT_DIR, "Clientes ativos - PJ.xlsx"))
 cnpj_ws = cnpj_wb.active
 
@@ -42,41 +41,9 @@ cpf_ws = cpf_wb.active
 inativos_wb = load_workbook(os.path.join(ROOT_DIR, "Clientes inativos - PJ e PF.xlsx"))
 inativos_ws = inativos_wb.active
 
-# Variáveis para enviar email e notificação
+# Criação do dicionário de contagem de dias
 today = datetime.today()
-day_15 = today + timedelta(days=15)
-day_14 = today + timedelta(days=14)
-day_13 = today + timedelta(days=13)
-day_12 = today + timedelta(days=12)
-day_11 = today + timedelta(days=11)
-day_10 = today + timedelta(days=10)
-day_9 = today + timedelta(days=9)
-day_8 = today + timedelta(days=8)
-day_7 = today + timedelta(days=7)
-day_6 = today + timedelta(days=6)
-day_5 = today + timedelta(days=5)
-day_4 = today + timedelta(days=4)
-day_3 = today + timedelta(days=3)
-day_2 = today + timedelta(days=2)
-day_1 = today + timedelta(days=1)
-
-counter = {
-    "15": day_15,
-    "14": day_14,
-    "13": day_13,
-    "12": day_12,
-    "11": day_11,
-    "10": day_10,
-    "9": day_9,
-    "8": day_8,
-    "7": day_7,
-    "6": day_6,
-    "5": day_5,
-    "4": day_4,
-    "3": day_3,
-    "2": day_2,
-    "1": day_1
-}
+counter = {str(i): today + timedelta(days=i) for i in range(1, 16)}
 
 PWD = open(os.path.join(PWD_DIR, "pwd.txt"), "r").read()
 email = Email("contato@mbkcontabilidade.com", PWD)
@@ -95,28 +62,34 @@ def get_client_data(cnpj):
 
     formatted_cnpj = f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:14]}"
 
-    if response["opcao_pelo_simples"] and response["opcao_pelo_mei"]:
+    # Verificar se as chaves existem antes de acessá-las
+    opcao_simples = response.get("opcao_pelo_simples", False)
+    opcao_mei = response.get("opcao_pelo_mei", False)
+
+    if opcao_simples and opcao_mei:
         frame = "MEI"
-    elif response["opcao_pelo_simples"]:
+    elif opcao_simples:
         frame = "SIMPLES"
-    elif response["opcao_pelo_mei"]:
+    elif opcao_mei:
         frame = "MEI"
     else:
         frame = " - "
 
-    if response["qsa"]:
+    # Checar se a chave 'qsa' existe e tem conteúdo
+    if "qsa" in response and response["qsa"]:
         responsable = response["qsa"][0]["nome_socio"]
     else:
         responsable = ""
-    partners = []
-    for i in range(len(response["qsa"])):
-        partner = response["qsa"][i]["nome_socio"]
-        partners.append(partner)
-
+    
+    partners = [socio["nome_socio"] for socio in response.get("qsa", [])]
     partners = ", ".join(partners)
 
-    year, month, day = response["data_inicio_atividade"].split("-")
-    start_at = f"{day}/{month}/{year}"
+    # Verificar se 'data_inicio_atividade' está presente
+    if "data_inicio_atividade" in response:
+        year, month, day = response["data_inicio_atividade"].split("-")
+        start_at = f"{day}/{month}/{year}"
+    else:
+        start_at = "Data não disponível"  # Valor padrão caso não esteja presente
 
     data = (
         [response["razao_social"], frame]
@@ -125,13 +98,13 @@ def get_client_data(cnpj):
         + [None]
         + [cnpj, formatted_cnpj]
         + [None] * 3
-        + [response["ddd_telefone_1"], response["email"]]
+        + [response.get("ddd_telefone_1", ""), response.get("email", "")]
         + [None] * 13
         + [
-            response["descricao_identificador_matriz_filial"],
+            response.get("descricao_identificador_matriz_filial", ""),
             start_at,
-            response["natureza_juridica"],
-            response["uf"],
+            response.get("natureza_juridica", ""),
+            response.get("uf", ""),
         ]
     )
     logging.info(f"Dados formatados para o CNPJ {cnpj}: {data}")
@@ -206,6 +179,8 @@ def email_already_sent_today(log_filename, client_email):
     logging.info(f"Nenhum e-mail enviado hoje para {client_email}")
     return False
 
+
+# abrir os certificados digitais:
 client_info_pj = {}
 client_info_pf = {}
 processed = set()
@@ -213,8 +188,8 @@ pfxs_directory = os.path.join(ROOT_DIR, "Certificados Digitais")
 for subdir, dirs, files in os.walk(pfxs_directory):
     for file in files:
         if (
-            file.endswith(".p12")
-            and "VENCIDOS" not in subdir
+            (file.endswith(".p12")
+            and "VENCIDOS" not in subdir)
             or file.endswith("pfx")
             and "VENCIDOS" not in subdir
         ):
@@ -281,6 +256,7 @@ for subdir, dirs, files in os.walk(pfxs_directory):
                         )
                         toast.add_actions(label="Mandar mensagem", launch=wa_link)
                         toast.show()
+
                     except Exception as e:
                         logging.error(f"Falha ao exibir notificação: {e}")
 
@@ -333,57 +309,57 @@ collumns = list(string.ascii_uppercase)
 collumns.extend(["AA", "AB", "AC", "AD", "AE", "AF"])
 
 # Verificar diferença entre as duas listas criadas
-# if pj_clients != pj_table_clients:
-#     if len(pj_clients) > len(pj_table_clients):
-#         diff = list(set(pj_clients).difference(pj_table_clients))
-#         # verificar se cliente já foi cliente antes
-#         for client in diff:
-#             is_old_client = check_ex_client(client)
-#             if is_old_client:
-#                 client_info_pj[client] = is_old_client
-#             else:
-#                 continue
-#     elif len(pj_clients) < len(pj_table_clients):
-#         diff = list(set(pj_table_clients).difference(pj_clients))
-#         for client in diff:
-#             x = 0
-#             for cell in cnpj_ws["I"]:
-#                 x += 1
-#                 if client == cell.value:
-#                     ex_client = [i.value for i in cnpj_ws[x]]
-#                     process_ex_client(ex_client)
-#                     for i in cnpj_ws[x]:
-#                         i.value = None
-#                 else:
-#                     continue
-# else:
-#     logging.info("Nenhuma diferença encontrada entre os clientes PJ dos certificados e da tabela")
+if pj_clients != pj_table_clients:
+    if len(pj_clients) > len(pj_table_clients):
+        diff = list(set(pj_clients).difference(pj_table_clients))
+        # verificar se cliente já foi cliente antes
+        for client in diff:
+            is_old_client = check_ex_client(client)
+            if is_old_client:
+                client_info_pj[client] = is_old_client
+            else:
+                continue
+    elif len(pj_clients) < len(pj_table_clients):
+        diff = list(set(pj_table_clients).difference(pj_clients))
+        for client in diff:
+            x = 0
+            for cell in cnpj_ws["I"]:
+                x += 1
+                if client == cell.value:
+                    ex_client = [i.value for i in cnpj_ws[x]]
+                    process_ex_client(ex_client)
+                    for i in cnpj_ws[x]:
+                        i.value = None
+                else:
+                    continue
+else:
+    logging.info("Nenhuma diferença encontrada entre os clientes PJ dos certificados e da tabela")
 
-# if pf_clients != pf_table_clients:
-#     if len(pf_clients) > len(pf_table_clients):
-#         diff = list(set(pf_clients).difference(pf_table_clients))
-#         # verificar se cliente já foi cliente antes
-#         for client in diff:
-#             is_old_client = check_ex_client(client)
-#             if is_old_client:
-#                 client_info_pf[client] = is_old_client
-#             else:
-#                 continue
-#     elif len(pf_clients) < len(pf_table_clients):
-#         diff = list(set(pf_table_clients).difference(pf_clients))
-#         for client in diff:
-#             x = 0
-#             for cell in cpf_ws["K"]:
-#                 x += 1
-#                 if client == cell.value:
-#                     ex_client = [i.value for i in cpf_ws[x]]
-#                     process_ex_client(ex_client)
-#                     for i in cpf_ws[x]:
-#                         i.value = None
-#                 else:
-#                     continue
-# else:
-#     logging.info("Nenhuma diferença encontrada entre os clientes PF dos certificados e da tabela")
+if pf_clients != pf_table_clients:
+    if len(pf_clients) > len(pf_table_clients):
+        diff = list(set(pf_clients).difference(pf_table_clients))
+        # verificar se cliente já foi cliente antes
+        for client in diff:
+            is_old_client = check_ex_client(client)
+            if is_old_client:
+                client_info_pf[client] = is_old_client
+            else:
+                continue
+    elif len(pf_clients) < len(pf_table_clients):
+        diff = list(set(pf_table_clients).difference(pf_clients))
+        for client in diff:
+            x = 0
+            for cell in cpf_ws["K"]:
+                x += 1
+                if client == cell.value:
+                    ex_client = [i.value for i in cpf_ws[x]]
+                    process_ex_client(ex_client)
+                    for i in cpf_ws[x]:
+                        i.value = None
+                else:
+                    continue
+else:
+    logging.info("Nenhuma diferença encontrada entre os clientes PF dos certificados e da tabela")
 
 i = 1
 for client in list(client_info_pj.keys()):
