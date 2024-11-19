@@ -1,7 +1,7 @@
 import os
 import re
-import csv
 import json
+import shutil
 import string
 import logging
 import pandas as pd
@@ -13,25 +13,21 @@ from mbk_email import Email, EmailTest, process_file_info
 from digital_certificate.cert import Certificate
 
 # Diretórios para salvar os arquivos
-ROOT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk"
-CSV_OUTPUT_DIR = os.path.join(ROOT_DIR, "csv")
-XLSX_OUTPUT_DIR = os.path.join(ROOT_DIR, "xlsx")
-LOG_DIR = os.path.join(ROOT_DIR, "logs")
-PWD_DIR = os.path.join(ROOT_DIR, "pwd")
+XLSX_OUTPUT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\xlsx"
+LOG_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\logs"
+VENCIDOS_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\vencidos"
 
 # Configuração de logs
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
-
 log_filename = os.path.join(LOG_DIR, f"processamento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 logging.basicConfig(filename=log_filename, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Caminho dos arquivos CSV de clientes
-CLIENTES_ATIVOS_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PJ.csv")
-CLIENTES_ATIVOS_PF_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes ativos - PF.csv")
-CLIENTES_INATIVOS_PF_PJ_CSV = os.path.join(CSV_OUTPUT_DIR, "Clientes inativos - PJ e PF.csv")
+# Variáveis para popular tabela
+ROOT_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk"
+PWD_DIR = r"C:\Users\miria\OneDrive\Área de Trabalho\mbk\pwd"
 
-# Carregar planilhas existentes (?????)
+# Carregar planilhas existentes
 cnpj_wb = load_workbook(os.path.join(ROOT_DIR, "Clientes ativos - PJ.xlsx"))
 cnpj_ws = cnpj_wb.active
 
@@ -41,31 +37,84 @@ cpf_ws = cpf_wb.active
 inativos_wb = load_workbook(os.path.join(ROOT_DIR, "Clientes inativos - PJ e PF.xlsx"))
 inativos_ws = inativos_wb.active
 
-# Criação do dicionário de contagem de dias
+# Variáveis para enviar email e notificação
 today = datetime.today()
-counter = {str(i): today + timedelta(days=i) for i in range(1, 16)}
+day_15 = today + timedelta(days=15)
+day_14 = today + timedelta(days=14)
+day_13 = today + timedelta(days=13)
+day_12 = today + timedelta(days=12)
+day_11 = today + timedelta(days=11)
+day_10 = today + timedelta(days=10)
+day_9 = today + timedelta(days=9)
+day_8 = today + timedelta(days=8)
+day_7 = today + timedelta(days=7)
+day_6 = today + timedelta(days=6)
+day_5 = today + timedelta(days=5)
+day_4 = today + timedelta(days=4)
+day_3 = today + timedelta(days=3)
+day_2 = today + timedelta(days=2)
+day_1 = today + timedelta(days=1)
+
+counter = {
+    "15": day_15,
+    "14": day_14,
+    "13": day_13,
+    "12": day_12,
+    "11": day_11,
+    "10": day_10,
+    "9": day_9,
+    "8": day_8,
+    "7": day_7,
+    "6": day_6,
+    "5": day_5,
+    "4": day_4,
+    "3": day_3,
+    "2": day_2,
+    "1": day_1
+}
 
 PWD = open(os.path.join(PWD_DIR, "pwd.txt"), "r").read()
 email = Email("contato@mbkcontabilidade.com", PWD)
 
 def get_client_data(cnpj):
-    """Pega dados do cliente por meio da API minhareceita"""
-    local_url = f"http://192.168.0.105:8000/{cnpj}"
-    ext_url = f"https://minhareceita.org/{cnpj}"
-    try:
-        response = request("GET", local_url, timeout=2)
-    except Exception:
-        response = request("GET", ext_url)
-
-    response = json.loads(response.text)
-    logging.info(f"Dados obtidos da API para o CNPJ {cnpj}: {response}")
-
+    """Pega dados do cliente por meio das APIs em sequência."""
+    endpoints = [
+        f"http://192.168.0.105:8000/{cnpj}",
+        f"http://192.168.0.114:8000/{cnpj}",
+        f"https://minhareceita.org/{cnpj}"
+    ]
+    
+    not_found_message = f"CNPJ {cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:14]} não encontrado."
+    response = None
+    
+    # Tentar cada endpoint até encontrar um que retorne dados
+    for endpoint in endpoints:
+        try:
+            response = request("GET", endpoint, timeout=2)
+            response_data = json.loads(response.text)
+            
+            # Verificar se o CNPJ não foi encontrado
+            if response_data.get("message") == not_found_message:
+                logging.info(f"{not_found_message} no endpoint {endpoint}")
+                continue  # Tentar o próximo endpoint
+            
+            logging.info(f"Dados obtidos da API para o CNPJ {cnpj}: {response_data}")
+            break  # Se encontrou os dados, sair do loop
+            
+        except Exception as e:
+            logging.error(f"Erro ao tentar obter dados para o CNPJ {cnpj} no endpoint {endpoint}: {e}")
+            continue
+    
+    # Se nenhuma resposta válida foi obtida
+    if not response or response_data.get("message") == not_found_message:
+        logging.info(f"CNPJ {cnpj} não encontrado em nenhum endpoint. Pulando...")
+        return None  # Retorna None para indicar que o CNPJ não foi encontrado
+    
+    # Processamento de dados se o CNPJ foi encontrado
     formatted_cnpj = f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:14]}"
-
-    # Verificar se as chaves existem antes de acessá-las
-    opcao_simples = response.get("opcao_pelo_simples", False)
-    opcao_mei = response.get("opcao_pelo_mei", False)
-
+    opcao_simples = response_data.get("opcao_pelo_simples", False)
+    opcao_mei = response_data.get("opcao_pelo_mei", False)
+    
     if opcao_simples and opcao_mei:
         frame = "MEI"
     elif opcao_simples:
@@ -74,95 +123,89 @@ def get_client_data(cnpj):
         frame = "MEI"
     else:
         frame = " - "
-
-    # Checar se a chave 'qsa' existe e tem conteúdo
-    if "qsa" in response and response["qsa"]:
-        responsable = response["qsa"][0]["nome_socio"]
+    
+    if "qsa" in response_data and response_data["qsa"]:
+        responsable = response_data["qsa"][0]["nome_socio"]
     else:
         responsable = ""
+    partners = [partner["nome_socio"] for partner in response_data.get("qsa", [])]
     
-    partners = [socio["nome_socio"] for socio in response.get("qsa", [])]
     partners = ", ".join(partners)
-
-    # Verificar se 'data_inicio_atividade' está presente
-    if "data_inicio_atividade" in response:
-        year, month, day = response["data_inicio_atividade"].split("-")
-        start_at = f"{day}/{month}/{year}"
-    else:
-        start_at = "Data não disponível"  # Valor padrão caso não esteja presente
+    year, month, day = response_data["data_inicio_atividade"].split("-")
+    start_at = f"{day}/{month}/{year}"
 
     data = (
-        [response["razao_social"], frame]
+        [response_data["razao_social"], frame]
         + [None] * 2
         + [expires_at, partners, responsable]
         + [None]
         + [cnpj, formatted_cnpj]
         + [None] * 3
-        + [response.get("ddd_telefone_1", ""), response.get("email", "")]
+        + [response_data.get("ddd_telefone_1"), response_data.get("email")]
         + [None] * 13
         + [
-            response.get("descricao_identificador_matriz_filial", ""),
+            response_data.get("descricao_identificador_matriz_filial"),
             start_at,
-            response.get("natureza_juridica", ""),
-            response.get("uf", ""),
+            response_data.get("natureza_juridica"),
+            response_data.get("uf"),
         ]
     )
     logging.info(f"Dados formatados para o CNPJ {cnpj}: {data}")
     return data
 
 def process_ex_client(client):
-    """Registrar ex clientes"""
+    """Registrar ex-clientes"""
     old_client = False
-    with open(CLIENTES_INATIVOS_PF_PJ_CSV, encoding="ISO-8859-1") as f:
-        reader = csv.reader(f)
-        cnpj = client[8]
-        CLIENTES_INATIVOS_PF_PJ_CSV = list(reader)
+    CLIENTES_INATIVOS_PF_PJ_XLSX = os.path.join(ROOT_DIR, "Clientes inativos - PJ e PF.xlsx")
 
-        # Trocando strings vazias por None, para coincidir com o argumento dado
-        for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
-            for element in ex_client:
-                if element == "":
-                    ex_client[ex_client.index(element)] = None
+    # Abrir a planilha de clientes inativos
+    inativos_wb = load_workbook(CLIENTES_INATIVOS_PF_PJ_XLSX)
+    inativos_ws = inativos_wb.active
 
-        for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
-            if cnpj == ex_client[8] or client[10] == ex_client[10]:
-                logging.info(f"{ex_client[0]} já foi nosso cliente")
-                old_client = ex_client
-                for element in ex_client:
-                    ex_client[ex_client.index(element)] = client[ex_client.index(element)]
-                break
+    # Verificar se o cliente já é inativo
+    for row in inativos_ws.iter_rows(values_only=True):
+        if row[8] == client[8] or row[10] == client[10]:  # Verificar pelo CNPJ ou outro identificador
+            logging.info(f"{row[0]} já foi nosso cliente")
+            old_client = row
+            break
 
-        if not old_client:
-            logging.info(f"O cliente {client[0]} foi movido para a lista de inativos")
-            CLIENTES_INATIVOS_PF_PJ_CSV.append(client)
-        with open(CLIENTES_INATIVOS_PF_PJ_CSV, "w", encoding="ISO-8859-1", newline="") as f:
-            writer = csv.writer(f)
-            for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
-                writer.writerow(ex_client)
+    # Se não é inativo, adicionar o cliente à lista de inativos
+    if not old_client:
+        logging.info(f"O cliente {client[0]} foi movido para a lista de inativos")
+        inativos_ws.append(client)
+
+    # Salvar a planilha atualizada
+    inativos_wb.save(CLIENTES_INATIVOS_PF_PJ_XLSX)
+
+
+import os
+import pandas as pd
+import logging
 
 def check_ex_client(client):
     """Verificar se o cliente supostamente novo já não foi um cliente antes"""
     old_client = False
-    with open(CLIENTES_INATIVOS_PF_PJ_CSV, encoding="ISO-8859-1") as f:
-        reader = csv.reader(f)
+    CLIENTES_INATIVOS_PF_PJ_XLSX = os.path.join(ROOT_DIR, "Clientes inativos - PJ e PF.xlsx")
+    
+    try:
+        # Lendo o arquivo Excel
+        df = pd.read_excel(CLIENTES_INATIVOS_PF_PJ_XLSX, engine='openpyxl')
+        # Substituindo valores vazios por None
+        df = df.where(pd.notnull(df), None)
 
-        CLIENTES_INATIVOS_PF_PJ_CSV = list(reader)
-        # Trocando strings vazias por None, para coincidir com o argumento dado
-        for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
-            for element in ex_client:
-                if element == "":
-                    ex_client[ex_client.index(element)] = None
-
-        for ex_client in CLIENTES_INATIVOS_PF_PJ_CSV:
+        for _, ex_client in df.iterrows():
             if client == ex_client[8] or client == ex_client[10]:
                 logging.info(f"{ex_client[0]} já foi nosso cliente")
                 old_client = ex_client
                 break
 
-    if old_client:
-        return old_client
-    else:
-        return False
+    except FileNotFoundError:
+        logging.error(f"Arquivo {CLIENTES_INATIVOS_PF_PJ_XLSX} não encontrado.")
+    except Exception as e:
+        logging.error(f"Erro ao processar o arquivo: {e}")
+
+    return old_client if old_client else False
+
 
 def email_already_sent_today(log_filename, client_email):
     """Verifica se um email já foi enviado hoje para o cliente"""
@@ -179,8 +222,6 @@ def email_already_sent_today(log_filename, client_email):
     logging.info(f"Nenhum e-mail enviado hoje para {client_email}")
     return False
 
-
-# abrir os certificados digitais:
 client_info_pj = {}
 client_info_pf = {}
 processed = set()
@@ -188,24 +229,48 @@ pfxs_directory = os.path.join(ROOT_DIR, "Certificados Digitais")
 for subdir, dirs, files in os.walk(pfxs_directory):
     for file in files:
         if (
-            (file.endswith(".p12")
-            and "VENCIDOS" not in subdir)
+            file.endswith(".p12")
+            and "VENCIDOS" not in subdir
             or file.endswith("pfx")
             and "VENCIDOS" not in subdir
         ):
             pfx_file = os.path.join(subdir, file)
-            password_match = re.findall(r"\[(.*?)\]", file)
-            if password_match:
-                password = password_match[0]
-            else:
-                raise ValueError(f"A senha para o arquivo '{file}' não foi encontrada no nome do arquivo.")
+            password = re.findall(r"\[(.*?)\]", file)[0]
 
             certificate = Certificate(pfx_file, password.encode())
             certificate.read_pfx_file()
 
             expires_at = certificate.not_valid_after()
+            expires_at_str = expires_at.strftime("%d/%m/%Y")
+            today = datetime.now()
+
+            if expires_at.replace(tzinfo=None) < today:
+                logging.info(f"Certificado vencido encontrado: {file}, movendo para pasta de vencidos")
+                dest_path = os.path.join(VENCIDOS_DIR, file)
+                shutil.move(pfx_file, dest_path)
+
+                common_name = certificate.common_name()
+                name, cnpj = common_name.split(":")
+
+                if len(cnpj) > 11:
+                    for row in cnpj_ws.iter_rows(min_row=2):
+                        if row[8].value == cnpj:
+                            inativos_ws.append([cell.value for cell in row])
+                            cnpj_ws.delete_rows(row[0].row)
+                            break
+
+                else:
+                    for row in cpf_ws.iter_rows(min_row=2):
+                        if row[10].value == cnpj:
+                            inativos_ws.append([cell.value for cell in row])
+                            cpf_ws.delete_rows(row[0].row)
+                            break
+
+                continue
+            
             expires_at = expires_at.strftime("%d/%m/%Y")
             commom_name = certificate.common_name()
+            today = datetime.now()
 
             name, cnpj = commom_name.split(":")
             logging.info(f"Certificado encontrado: {name}, CNPJ/CPF: {cnpj}, expira em {expires_at}")
@@ -256,7 +321,6 @@ for subdir, dirs, files in os.walk(pfxs_directory):
                         )
                         toast.add_actions(label="Mandar mensagem", launch=wa_link)
                         toast.show()
-
                     except Exception as e:
                         logging.error(f"Falha ao exibir notificação: {e}")
 
@@ -271,6 +335,18 @@ for subdir, dirs, files in os.walk(pfxs_directory):
                     else:
                         logging.info(f"E-mail já enviado para {client_email} hoje. Não enviado novamente.")
 
+found_in_inativos = False
+for row in inativos_ws.iter_rows(min_row=2):
+    if (len(cnpj) > 11 and row[8].value == cnpj) or (len(cnpj) <= 11 and row[10].value == cnpj):
+        if len(cnpj) > 11:
+            cnpj_ws.append([cell.value for cell in row])
+        else:
+            cpf_ws.append([cell.value for cell in row])
+
+        inativos_ws.delete_rows(row[0].row)
+        found_in_inativos = True
+        logging.info(f"Cliente {name} ({cnpj}) movido de inativos para ativos.")
+        break
 
 # Criar listas de clientes do certificado e da tabela
 pj_clients = sorted(list(client_info_pj.keys()))
@@ -377,23 +453,4 @@ for client in list(client_info_pf.keys()):
 cpf_wb.save(os.path.join(XLSX_OUTPUT_DIR, "Clientes ativos - PF.xlsx"))
 cnpj_wb.save(os.path.join(XLSX_OUTPUT_DIR, "Clientes ativos - PJ.xlsx"))
 inativos_wb.save(os.path.join(XLSX_OUTPUT_DIR, "Clientes inativos - PJ e PF.xlsx"))
-
-logging.info("Arquivos XLSX salvos com sucesso")
-
-# Salvar os arquivos CSV no novo diretório
-with open(CLIENTES_ATIVOS_PJ_CSV, "w", encoding="ISO-8859-1", newline="") as f:
-    writer = csv.writer(f)
-    for client in client_info_pj.keys():
-        writer.writerow(client_info_pj[client])
-
-with open(CLIENTES_ATIVOS_PF_CSV, "w", encoding="ISO-8859-1", newline="") as f:
-    writer = csv.writer(f)
-    for client in client_info_pf.keys():
-        writer.writerow(client_info_pf[client])
-
-with open(CLIENTES_INATIVOS_PF_PJ_CSV, "w", encoding="ISO-8859-1", newline="") as f:
-    writer = csv.writer(f)
-    for row in inativos_ws.iter_rows(values_only=True):
-        writer.writerow(row)
-
-logging.info("Arquivos CSV salvos com sucesso")
+logging.info("Planilhas de clientes atualizadas com sucesso")
